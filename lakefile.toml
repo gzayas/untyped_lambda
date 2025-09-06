@@ -1,0 +1,15 @@
+name = "lamb"
+version = "0.1.0"
+defaultTargets = ["lamb"]
+
+[[lean_lib]]
+name = "Lamb"
+
+[[lean_exe]]
+name = "lamb"
+root = "Main"
+
+[[require]]
+name = "Parser"
+git = "https://github.com/fgdorais/lean4-parser"
+rev = "main"
