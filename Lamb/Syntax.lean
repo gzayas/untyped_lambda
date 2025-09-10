@@ -52,11 +52,14 @@ deriving Repr
 
 abbrev Context := List (String × Binding)
 
-def name2index (ctx : Context) (x : String) : (Option Nat) :=
+def nameToIndex (ctx : Context) (x : String) : (Option Nat) :=
  match ctx with
  | .nil              => none
- | .cons (y, _) rest => if y = x then some 0 else (do pure (1 + (← name2index rest x)))
+ | .cons (y, _) rest => if y = x then some 0 else (do pure (1 + (← nameToIndex rest x)))
 
+def addBinding (ctx : Context) (x : String) (b : Binding) := (x,b) :: ctx
+
+def addName (ctx : Context) (x : String) := addBinding ctx x .nameBind
 
 inductive Command
   | import_ (span : Span) (module: String)

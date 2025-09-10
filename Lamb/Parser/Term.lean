@@ -26,7 +26,7 @@ mutual
      partial def varP_ : Parser (String × Nat × Nat) := do
        let x ← ident
        let ctx  ← get
-       match Syntax.name2index ctx x  with
+       match Syntax.nameToIndex ctx x  with
        | some idx => pure (x, idx, (List.length ctx))
        | none     => Parser.throwUnexpectedWithMessage none s!"Identifier {x} is unbound"
 
@@ -51,6 +51,7 @@ mutual
     partial def letP_ : Parser (String × Term × Term) := do
       matchS "let"
       let x ← ident
+      set (Syntax.addName (← get) x)
       matchC '='
       let t ← term
       matchS "in"
@@ -61,8 +62,9 @@ mutual
     withSpan absP_ (fun (x, t) s => Term.abs s x t)
   where
     partial def absP_ : Parser (String × Term) := do
-        (matchC 'λ' <|> matchC '\\')
+        (matchS "lambda" <|> matchC '\\')
         let x ← ident
+        set (Syntax.addName (← get) x)
         matchS "."
         let t ← term
         pure (x, t)
@@ -81,8 +83,9 @@ mutual
   partial def floatP : Parser Term :=
     withSpan parseFloat (fun f s => Term.float s f)
 
-  partial def timesFloatP : Parser Term :=
-    withSpan (Prod.mk <$> term <*> term) (fun (t₁, t₂) s => Term.timesfloat s t₁ t₂)
+  partial def timesfloatP : Parser Term :=
+    withSpan (Prod.mk <$> (matchS "timesfloat" *> atom ) <*> atom)
+             (fun (t₁, t₂) s => Term.timesfloat s t₁ t₂)
 
   partial def namedField : Parser (Span × String × Term) :=
     withSpan (Prod.mk <$> (ident <* matchC '=') <*> term) (fun (x, t) s => (s, x, t))
@@ -94,7 +97,7 @@ mutual
     withSpan recordFields_ (fun l s => Term.record s l)
   where
      partial def recordFields_ : Parser (List (Span × String × Term)) := do
-       let fields ← Combinators.sepBy (namedField <|> unnamedField) (matchC ',')
+       let fields ← sepBy (matchC ',') (namedField <|> unnamedField)
        let namedFields ← pure (List.map nameField (List.zipIdx fields.toList))
        pure namedFields
        where
@@ -108,15 +111,19 @@ mutual
 
   partial def atom : Parser Term := do
     between '(' term ')' <|>
-    stringP <|>
-    trueP <|>
-    falseP <|>
-    recordP <|>
-    ifP <|>
-    letP <|>
-    zeroP <|>
-    floatP <|>
-    timesFloatP <|>
+    stringP              <|>
+    trueP                <|>
+    falseP               <|>
+    floatP               <|>
+    recordP              <|>
+    ifP                  <|>
+    letP                 <|>
+    absP                 <|>
+    zeroP                <|>
+    succP                <|>
+    predP                <|>
+    isZeroP              <|>
+    timesfloatP          <|>
     varP
 
   /- Apply terms to the left -/
@@ -134,7 +141,6 @@ mutual
     postfixes t
 end
 
-
 def termP : Parser Command :=
   withSpan (term) (fun t s => Command.eval s t)
 
@@ -143,8 +149,7 @@ def importP : Parser Command :=
 
 def bindIdentifier_ : Parser (String × Binding) := do
   let x ← (ident <* matchC '/')
-  let ctx ← get
-  set ((x, Binding.nameBind) :: ctx)
+  set (Syntax.addName (← get) x)
   pure (x, Binding.nameBind)
 def bindIdentifier : Parser Command :=
   withSpan bindIdentifier_ (fun (x, b) s => Command.bind s x b)
@@ -152,8 +157,7 @@ def bindIdentifier : Parser Command :=
 def bindTerm_ : Parser (String × Binding) := do
     let x ← ident <* matchC '='
     let t ← term
-    let ctx ← get
-    set ((x, Binding.nameBind) :: ctx)
+    set (Syntax.addName (← get) x)
     pure (x, Binding.abbBind t)
 def bindTerm : Parser Command :=
   withSpan bindTerm_ (fun (x, b) s => Command.bind s x b)
@@ -161,17 +165,18 @@ def bindTerm : Parser Command :=
 def bindP : Parser Command := bindIdentifier <|> bindTerm
 
 def commandP  : Parser Command :=
-  importP <|> termP <|> bindP
+   ws *> (importP <|> bindP <|> termP)
 
 /- The top level of a file is a sequence of commands, each terminated
    by a semicolon. -/
 
 def toplevel: Parser <| Array Command :=
-  sepBy commandP (matchC ';')
+  sepEndBy  (matchC ';') commandP
 
+def toplevelP := (ws *> toplevel <* Parser.endOfInput)
 
 def parse (input : String) : Except String <| Array Command :=
-  match StateT.run ((ws *> toplevel <* Parser.endOfInput).run input.toSubstring) Inhabited.default with
+  match StateT.run (toplevelP.run input.toSubstring) Inhabited.default with
   | (.ok _ stx, _) => .ok stx
   | (.error _ err, _) => .error ("error: " ++ toString err)
 
@@ -180,11 +185,8 @@ def parseTerm (input : String) : Except String Term  :=
   | (.ok _ stx, _) => .ok stx
   | (.error _ err, _) => .error ("error: " ++ toString err)
 
-
-def parseFile (p : Parser α) (path : System.FilePath) : IO α := do
+def parseFile (path : System.FilePath) : IO (Except String <| Array Command) := do
   let contents ← IO.FS.readFile path
-  match StateT.run (p.run contents) Inhabited.default with
-  | (.ok _ stx, _) => pure stx
-  | (.error _ msg, _) => throw <| IO.userError s!"parse error: {msg} in {path}"
+  return parse contents
 
 end Lamb.Parser.Term
